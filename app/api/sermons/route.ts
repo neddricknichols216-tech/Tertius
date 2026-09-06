@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getServiceSupabaseClient } from '@/lib/supabaseClient';
 import { SermonRecordSchema } from '@/types/sermon';
+import { requireUserFromRequest } from '@/lib/serverAuth';
 
 const CreateSchema = SermonRecordSchema.pick({
-  user_id: true,
   title: true,
   primary_passage: true,
   series: true,
@@ -14,6 +14,10 @@ const CreateSchema = SermonRecordSchema.pick({
 }).partial();
 
 export async function POST(req: Request) {
+  const authCheck = await requireUserFromRequest(req);
+  if ('error' in authCheck) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const user = authCheck.user;
+
   const body = await req.json().catch(() => ({}));
   const parsed = CreateSchema.safeParse(body);
   if (!parsed.success) {
@@ -21,7 +25,7 @@ export async function POST(req: Request) {
   }
 
   const supabase = getServiceSupabaseClient();
-  const insert = parsed.data;
+  const insert = { ...parsed.data, user_id: user.id };
 
   const { data, error } = await supabase.from('sermons').insert([insert]).select().single();
   if (error) {
@@ -33,16 +37,12 @@ export async function POST(req: Request) {
 }
 
 export async function GET(req: Request) {
-  // list sermons for a user. Accept ?user_id= query param for now
-  const url = new URL(req.url);
-  const userId = url.searchParams.get('user_id');
+  const authCheck = await requireUserFromRequest(req);
+  if ('error' in authCheck) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const user = authCheck.user;
+
   const supabase = getServiceSupabaseClient();
-
-  if (!userId) {
-    return NextResponse.json({ error: 'user_id required' }, { status: 400 });
-  }
-
-  const { data, error } = await supabase.from('sermons').select('*').eq('user_id', userId).order('updated_at', { ascending: false });
+  const { data, error } = await supabase.from('sermons').select('*').eq('user_id', user.id).order('updated_at', { ascending: false });
   if (error) {
     console.error('supabase select error', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
